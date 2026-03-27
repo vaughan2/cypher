@@ -7,9 +7,10 @@ CLI     = /usr/local/bin/cypher
 
 build:
 	go build -o $(BINARY) .
-	mkdir -p $(BUNDLE)/MacOS
+	mkdir -p $(BUNDLE)/MacOS $(BUNDLE)/Resources
 	cp $(BINARY) $(BUNDLE)/MacOS/
 	cp Info.plist $(BUNDLE)/
+	cp cypher.icns $(BUNDLE)/Resources/
 	codesign --sign - --force $(APP)
 
 install: build
