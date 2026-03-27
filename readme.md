@@ -24,14 +24,14 @@ A macOS menu bar utility that locks your screen with a Matrix-style rain animati
 ### Homebrew (recommended)
 
 ```sh
-brew tap vaughandauria/tools
+brew tap vaughan2/tools
 brew install cypher
 ```
 
 ### Build from source
 
 ```sh
-git clone https://github.com/vaughandauria/cypher
+git clone https://github.com/vaughan2/cypher
 cd cypher
 make install   # builds and copies to /Applications
 ```
@@ -60,7 +60,7 @@ Grant them in **System Settings → Privacy & Security**, then relaunch.
 ## Development
 
 ```sh
-git clone https://github.com/vaughandauria/cypher
+git clone https://github.com/vaughan2/cypher
 cd cypher
 make build          # builds hotkey-incognito.app in the current directory
 make clean          # removes build artifacts

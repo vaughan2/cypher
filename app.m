@@ -465,40 +465,71 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     self.statusItem.button.image.template = YES;
 }
 
-- (void)applicationDidFinishLaunching:(NSNotification *)note {
-    sOverlayWindows = [[NSMutableArray alloc] init];
+// Returns YES only when both required permissions are confirmed.
+// Walks the user through each missing one with a blocking alert before continuing.
+- (BOOL)checkAndRequestPermissions {
+    // ── Accessibility (CGEventTap / block system shortcuts) ──────────────────
+    if (!AXIsProcessTrusted()) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Accessibility permission required";
+        alert.informativeText =
+            @"Cypher needs Accessibility access to block system shortcuts "
+            @"(Cmd+Tab, Mission Control, Spaces) while the screen is locked.\n\n"
+            @"Click \"Open Settings\", enable Cypher, then relaunch the app.";
+        alert.alertStyle = NSAlertStyleCritical;
+        [alert addButtonWithTitle:@"Open Settings"];
+        [alert addButtonWithTitle:@"Quit"];
+        NSModalResponse r = [alert runModal];
+        if (r == NSAlertFirstButtonReturn) {
+            [[NSWorkspace sharedWorkspace] openURL:
+                [NSURL URLWithString:
+                    @"x-apple.systempreferences:com.apple.preference.security"
+                    @"?Privacy_Accessibility"]];
+        }
+        [NSApp terminate:nil];
+        return NO;
+    }
 
-    [self setupStatusItem];
-
+    // ── Input Monitoring (RegisterEventHotKey / unlock hotkey) ───────────────
     EventTypeSpec eventType = {kEventClassKeyboard, kEventHotKeyPressed};
     InstallApplicationEventHandler(HotkeyHandler, 1, &eventType,
                                    (__bridge void *)self, NULL);
     EventHotKeyID hkID = {.signature = 'MTRX', .id = 1};
-    EventHotKeyRef ref = NULL;
+    EventHotKeyRef ref  = NULL;
     OSStatus status = RegisterEventHotKey(HOTKEY_KEYCODE, HOTKEY_MODIFIERS, hkID,
                                           GetApplicationEventTarget(), 0, &ref);
     if (status != noErr) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Hotkey registration failed";
-            alert.informativeText =
-                @"Hotkey Incognito couldn't register Cmd+Shift+L.\n\n"
-                @"Open System Settings → Privacy & Security → Input Monitoring "
-                @"and enable Cypher, then relaunch the app.";
-            alert.alertStyle = NSAlertStyleWarning;
-            [alert addButtonWithTitle:@"Open Privacy Settings"];
-            [alert addButtonWithTitle:@"OK"];
-            if ([alert runModal] == NSAlertFirstButtonReturn) {
-                [[NSWorkspace sharedWorkspace] openURL:
-                    [NSURL URLWithString:
-                        @"x-apple.systempreferences:com.apple.preference.security"
-                        @"?Privacy_ListenEvent"]];
-            }
-        });
-    } else {
-        self.hotKeyRef = ref;
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Input Monitoring permission required";
+        alert.informativeText =
+            @"Cypher needs Input Monitoring access to register the unlock "
+            @"hotkey (Cmd+Shift+L).\n\n"
+            @"Without it the screen cannot be unlocked once locked.\n\n"
+            @"Click \"Open Settings\", enable Cypher, then relaunch the app.";
+        alert.alertStyle = NSAlertStyleCritical;
+        [alert addButtonWithTitle:@"Open Settings"];
+        [alert addButtonWithTitle:@"Quit"];
+        NSModalResponse r = [alert runModal];
+        if (r == NSAlertFirstButtonReturn) {
+            [[NSWorkspace sharedWorkspace] openURL:
+                [NSURL URLWithString:
+                    @"x-apple.systempreferences:com.apple.preference.security"
+                    @"?Privacy_ListenEvent"]];
+        }
+        [NSApp terminate:nil];
+        return NO;
     }
 
+    self.hotKeyRef = ref;
+    return YES;
+}
+
+- (void)applicationDidFinishLaunching:(NSNotification *)note {
+    sOverlayWindows = [[NSMutableArray alloc] init];
+
+    if (![self checkAndRequestPermissions]) return;
+
+    [self setupStatusItem];
     NSLog(@"[cypher] Running — Cmd+Shift+L to toggle Matrix lock.");
 }
 
@@ -540,6 +571,9 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
 }
 
 - (void)showOverlay {
+    // Never lock if the unlock hotkey isn't registered — user would have no escape.
+    if (!self.hotKeyRef) return;
+
     NSMutableArray<NSWindow *> *newWindows = [[NSMutableArray alloc] init];
 
     for (NSScreen *screen in [NSScreen screens]) {
@@ -573,26 +607,7 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     [sOverlayWindows addObjectsFromArray:newWindows];
     sOverlayVisible = YES;
     [self updateStatusIcon];
-
-    if (![self installEventTap]) {
-        NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText     = @"Accessibility permission required";
-        alert.informativeText =
-            @"To block Cmd+Tab and other system shortcuts while locked, "
-            @"enable Cypher in:\n\n"
-            @"System Settings → Privacy & Security → Accessibility\n\n"
-            @"The overlay is still active — only the keyboard block is limited.";
-        alert.alertStyle = NSAlertStyleWarning;
-        [alert addButtonWithTitle:@"Open Privacy Settings"];
-        [alert addButtonWithTitle:@"OK"];
-        if ([alert runModal] == NSAlertFirstButtonReturn) {
-            [[NSWorkspace sharedWorkspace] openURL:
-                [NSURL URLWithString:
-                    @"x-apple.systempreferences:com.apple.preference.security"
-                    @"?Privacy_Accessibility"]];
-        }
-    }
-
+    [self installEventTap]; // already confirmed granted at launch
     [NSApp activateIgnoringOtherApps:YES];
 }
 
