@@ -2,7 +2,7 @@ package main
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc -mmacosx-version-min=11.0
-#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework CoreGraphics -framework CoreImage -framework QuartzCore
+#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework CoreGraphics -framework CoreImage -framework QuartzCore -framework ServiceManagement
 #include "app.h"
 */
 import "C"

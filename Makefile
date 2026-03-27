@@ -1,8 +1,9 @@
-APP     = hotkey-incognito.app
-BINARY  = hotkey-incognito
+APP     = cypher.app
+BINARY  = cypher
 BUNDLE  = $(APP)/Contents
+CLI     = /usr/local/bin/cypher
 
-.PHONY: build install clean
+.PHONY: build install uninstall clean
 
 build:
 	go build -o $(BINARY) .
@@ -14,6 +15,12 @@ build:
 install: build
 	rm -rf /Applications/$(APP)
 	cp -r $(APP) /Applications/
+	@sudo bash -c 'printf "#!/bin/sh\nopen -a cypher \"\$$@\"\n" > $(CLI) && chmod +x $(CLI)'
+	@echo "Installed. Run 'cypher' from any terminal to launch."
+
+uninstall:
+	rm -rf /Applications/$(APP)
+	sudo rm -f $(CLI)
 
 clean:
 	rm -rf $(BINARY) $(APP)

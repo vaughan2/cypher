@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build app bundle
+        run: make build
+
+      - name: Zip app bundle
+        run: |
+          zip -r cypher-${{ github.ref_name }}-macOS.zip cypher.app
+          shasum -a 256 cypher-${{ github.ref_name }}-macOS.zip > cypher-${{ github.ref_name }}-macOS.zip.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Cypher ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            cypher-${{ github.ref_name }}-macOS.zip
+            cypher-${{ github.ref_name }}-macOS.zip.sha256

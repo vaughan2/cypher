@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.vaughan.hotkey-incognito</string>
+    <string>com.vaughan2.cypher</string>
     <key>CFBundleName</key>
-    <string>hotkey-incognito</string>
+    <string>cypher</string>
     <key>CFBundleDisplayName</key>
-    <string>Hotkey Incognito</string>
+    <string>Cypher</string>
     <key>CFBundleExecutable</key>
-    <string>hotkey-incognito</string>
+    <string>cypher</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

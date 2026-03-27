@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>
 #import <QuartzCore/QuartzCore.h>
+#import <ServiceManagement/ServiceManagement.h>
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -394,14 +395,35 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
 
     NSStatusBarButton *btn = self.statusItem.button;
     btn.image = [NSImage imageWithSystemSymbolName:@"lock.open.fill"
-                          accessibilityDescription:@"Hotkey Incognito"];
+                          accessibilityDescription:@"Cypher"];
     btn.image.template = YES;
-    btn.toolTip = @"Hotkey Incognito — Cmd+Shift+L to lock";
+    btn.toolTip = @"Cypher — Cmd+Shift+L to lock";
 
     NSMenu *menu = [[NSMenu alloc] init];
     [menu addItemWithTitle:@"Toggle Matrix Lock"
                     action:@selector(toggleOverlay)
              keyEquivalent:@""];
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *loginItem = [[NSMenuItem alloc]
+        initWithTitle:@"Launch at Login"
+               action:@selector(toggleLaunchAtLogin:)
+        keyEquivalent:@""];
+    loginItem.target = self;
+    BOOL runningFromBundle = [NSBundle.mainBundle.bundlePath hasSuffix:@".app"];
+    if (@available(macOS 13.0, *)) {
+        if (runningFromBundle) {
+            loginItem.state = ([SMAppService.mainAppService status] == SMAppServiceStatusEnabled)
+                ? NSControlStateValueOn : NSControlStateValueOff;
+        } else {
+            loginItem.enabled = NO;
+            loginItem.toolTip = @"Run make install first";
+        }
+    } else {
+        loginItem.hidden = YES;
+    }
+    [menu addItem:loginItem];
+
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Quit"
                     action:@selector(terminate:)
@@ -409,11 +431,37 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     self.statusItem.menu = menu;
 }
 
+- (void)toggleLaunchAtLogin:(NSMenuItem *)item API_AVAILABLE(macos(13.0)) {
+    if (![NSBundle.mainBundle.bundlePath hasSuffix:@".app"]) return;
+    NSError *error = nil;
+    SMAppService *svc = SMAppService.mainAppService;
+
+    if (svc.status == SMAppServiceStatusEnabled) {
+        [svc unregisterAndReturnError:&error];
+        item.state = NSControlStateValueOff;
+    } else {
+        // Unregister any stale registration (e.g. from a previous bundle path) before re-registering
+        [svc unregisterAndReturnError:nil];
+        [svc registerAndReturnError:&error];
+        if (!error) {
+            item.state = NSControlStateValueOn;
+        } else {
+            NSAlert *alert = [[NSAlert alloc] init];
+            alert.messageText     = @"Launch at Login failed";
+            alert.informativeText = [NSString stringWithFormat:
+                @"Cypher must be installed to /Applications to enable Launch at Login.\n\n"
+                @"Run: make install\n\nError: %@", error.localizedDescription];
+            alert.alertStyle = NSAlertStyleWarning;
+            [alert runModal];
+        }
+    }
+}
+
 - (void)updateStatusIcon {
     NSString *symbol = sOverlayVisible ? @"lock.fill" : @"lock.open.fill";
     self.statusItem.button.image =
         [NSImage imageWithSystemSymbolName:symbol
-                     accessibilityDescription:@"Hotkey Incognito"];
+                     accessibilityDescription:@"Cypher"];
     self.statusItem.button.image.template = YES;
 }
 
@@ -436,7 +484,7 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
             alert.informativeText =
                 @"Hotkey Incognito couldn't register Cmd+Shift+L.\n\n"
                 @"Open System Settings → Privacy & Security → Input Monitoring "
-                @"and enable Hotkey Incognito, then relaunch the app.";
+                @"and enable Cypher, then relaunch the app.";
             alert.alertStyle = NSAlertStyleWarning;
             [alert addButtonWithTitle:@"Open Privacy Settings"];
             [alert addButtonWithTitle:@"OK"];
@@ -451,7 +499,7 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
         self.hotKeyRef = ref;
     }
 
-    NSLog(@"[hotkey-incognito] Running — Cmd+Shift+L to toggle Matrix lock.");
+    NSLog(@"[cypher] Running — Cmd+Shift+L to toggle Matrix lock.");
 }
 
 - (void)applicationWillTerminate:(NSNotification *)note {
@@ -531,7 +579,7 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
         alert.messageText     = @"Accessibility permission required";
         alert.informativeText =
             @"To block Cmd+Tab and other system shortcuts while locked, "
-            @"enable Hotkey Incognito in:\n\n"
+            @"enable Cypher in:\n\n"
             @"System Settings → Privacy & Security → Accessibility\n\n"
             @"The overlay is still active — only the keyboard block is limited.";
         alert.alertStyle = NSAlertStyleWarning;
