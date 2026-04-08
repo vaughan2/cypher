@@ -4,7 +4,7 @@
 # Cypher
 You know... sometimes you just want to walk away from the screens, man. Let the AI do all the heavy lifting without the damn rig going to sleep on you. I mean, why should we do the sweating when the machines can stay up all night? Ignorance is bliss, right?
 
-## Human description
+### Human description
 A macOS menu bar utility that locks your screen with a Matrix-style rain animation on demand. Press a hotkey to cover all displays with an animated overlay that blocks all input — press it again to instantly return to your work.
 
 ![Cypher demo](docs/demo.gif)
