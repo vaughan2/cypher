@@ -1,3 +1,6 @@
+> [!WARNING]
+> This is a beta app, and its been vibe coded, use at own risk.
+
 # Cypher
 
 A macOS menu bar utility that locks your screen with a Matrix-style rain animation on demand. Press a hotkey to cover all displays with an animated overlay that blocks all input — press it again to instantly return to your work.
@@ -24,8 +27,6 @@ A macOS menu bar utility that locks your screen with a Matrix-style rain animati
 ### Homebrew (recommended)
 
 ```sh
-brew tap vaughan2/tools
-brew install cypher
 ```
 
 ### Build from source
