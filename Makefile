@@ -1,11 +1,12 @@
-APP     = cypher.app
-BINARY  = cypher
-BUNDLE  = $(APP)/Contents
-CLI     = /usr/local/bin/cypher
-DEST    = /Applications/$(APP)
-SIGN_ID = CypherCodeSign
+APP      = cypher.app
+BINARY   = cypher
+BUNDLE   = $(APP)/Contents
+CLI      = /usr/local/bin/cypher
+DEST     = /Applications/$(APP)
+SIGN_ID  = CypherCodeSign
+TEST_BIN = tests/test_helpers
 
-.PHONY: build install update uninstall clean setup-cert trust-cert
+.PHONY: build install update uninstall clean setup-cert trust-cert test
 
 # One-time setup: creates a local code-signing cert in your login keychain.
 # With a stable cert, TCC anchors permissions to the cert identity instead of
@@ -73,5 +74,17 @@ uninstall:
 	sudo rm -rf $(DEST)
 	sudo rm -f $(CLI)
 
+test: build $(TEST_BIN)
+	@echo "── Unit tests ──────────────────────────────"
+	@./$(TEST_BIN)
+	@echo ""
+	@echo "── Smoke tests ─────────────────────────────"
+	@bash tests/smoke_test.sh
+
+$(TEST_BIN): tests/test_helpers.m hotkey_helpers.h
+	@clang -x objective-c -fobjc-arc -mmacosx-version-min=11.0 \
+	  -framework Foundation -framework Carbon -framework CoreGraphics \
+	  -o $(TEST_BIN) tests/test_helpers.m
+
 clean:
-	rm -rf $(BINARY) $(APP)
+	rm -rf $(BINARY) $(APP) $(TEST_BIN)
