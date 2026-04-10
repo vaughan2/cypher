@@ -542,7 +542,17 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
 }
 
 - (BOOL)installEventTap {
-    CGEventMask mask = kCGEventMaskForAllEvents;
+    CGEventMask mask = (CGEventMaskBit(kCGEventKeyDown)        |
+                        CGEventMaskBit(kCGEventKeyUp)          |
+                        CGEventMaskBit(kCGEventFlagsChanged)   |
+                        CGEventMaskBit(kCGEventMouseMoved)     |
+                        CGEventMaskBit(kCGEventLeftMouseDown)  |
+                        CGEventMaskBit(kCGEventLeftMouseUp)    |
+                        CGEventMaskBit(kCGEventRightMouseDown) |
+                        CGEventMaskBit(kCGEventRightMouseUp)   |
+                        CGEventMaskBit(kCGEventOtherMouseDown) |
+                        CGEventMaskBit(kCGEventOtherMouseUp)   |
+                        CGEventMaskBit(kCGEventScrollWheel));
 
     sEventTap = CGEventTapCreate(kCGSessionEventTap,
                                   kCGHeadInsertEventTap,
@@ -574,6 +584,26 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     // Never lock if the unlock hotkey isn't registered — user would have no escape.
     if (!self.hotKeyRef) return;
 
+    // Re-check Accessibility in case the user revoked it after launch.
+    // Without it the event tap won't install and the overlay blocks nothing.
+    if (!AXIsProcessTrusted()) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Accessibility permission was revoked";
+        alert.informativeText =
+            @"Cypher can no longer block system shortcuts. "
+            @"Re-enable Accessibility in System Settings, then relaunch.";
+        alert.alertStyle = NSAlertStyleWarning;
+        [alert addButtonWithTitle:@"Open Settings"];
+        [alert addButtonWithTitle:@"Cancel"];
+        if ([alert runModal] == NSAlertFirstButtonReturn) {
+            [[NSWorkspace sharedWorkspace] openURL:
+                [NSURL URLWithString:
+                    @"x-apple.systempreferences:com.apple.preference.security"
+                    @"?Privacy_Accessibility"]];
+        }
+        return;
+    }
+
     NSMutableArray<NSWindow *> *newWindows = [[NSMutableArray alloc] init];
 
     for (NSScreen *screen in [NSScreen screens]) {
@@ -591,6 +621,7 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
         [win setOpaque:YES];
         [win setIgnoresMouseEvents:NO];
         [win setHidesOnDeactivate:NO];
+        [win setMovable:NO];
         [win setBackgroundColor:[NSColor blackColor]];
 
         MatrixView *view = [[MatrixView alloc]
@@ -607,7 +638,20 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     [sOverlayWindows addObjectsFromArray:newWindows];
     sOverlayVisible = YES;
     [self updateStatusIcon];
-    [self installEventTap]; // already confirmed granted at launch
+
+    if (![self installEventTap]) {
+        // Tap failed — tear down the overlay rather than show a fake lock.
+        [self hideOverlay];
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Failed to install input blocker";
+        alert.informativeText =
+            @"Cypher could not block system input. The screen was not locked. "
+            @"Try relaunching the app.";
+        alert.alertStyle = NSAlertStyleCritical;
+        [alert runModal];
+        return;
+    }
+
     [NSApp activateIgnoringOtherApps:YES];
 }
 
