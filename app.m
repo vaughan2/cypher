@@ -34,8 +34,7 @@ static const unichar kMatrixChars[] = {
     'Z','T','Y','U','I','O','P','A','S','D',
     '!','@','#','$','%','&','*','+','-','=','<','>','?',
 };
-static const int kMatrixCharCount =
-    (int)(sizeof(kMatrixChars) / sizeof(kMatrixChars[0]));
+enum { kMatrixCharCount = sizeof(kMatrixChars) / sizeof(kMatrixChars[0]) };
 
 // ---------------------------------------------------------------------------
 // Per-column drop state
@@ -62,7 +61,7 @@ typedef struct {
     float               *_cellCY;     // [row] pre-computed cell centre Y
     NSFont              *_font;
     NSFont              *_rippleFonts[RIPPLE_TIERS];
-    NSString            *_charStrings[128];
+    NSString            *_charStrings[kMatrixCharCount];
     NSMutableDictionary *_drawAttrs;
     NSPoint              _mousePos;
 }
@@ -137,6 +136,7 @@ static float randFloat(float lo, float hi) {
 }
 
 - (void)dealloc {
+    [_displayLink invalidate];
     [_timer invalidate];
     free(_drops); free(_charIdx); free(_brightness); free(_ripple);
     free(_cellCX); free(_cellCY);
@@ -213,8 +213,7 @@ static float randFloat(float lo, float hi) {
         _mousePos      = local;
 
         // ── Ripple decay + inject energy at cursor ────────────────────────────
-        float height = self.bounds.size.height;
-        int   count  = _cols * _rows;
+        int count = _cols * _rows;
 
         // Decay all existing ripple energy
         for (int i = 0; i < count; i++) _ripple[i] *= 0.88f;
@@ -438,14 +437,16 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy,
 @end
 
 @implementation HotkeyRecorderView {
-    BOOL _recording;
+    BOOL      _recording;
+    NSString *_displayCache; // cached result of hotkeyDisplayString — updated on capture only
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     self = [super initWithFrame:frame];
     if (!self) return nil;
-    _capturedKeyCode  = sHotkeyCode;
+    _capturedKeyCode   = sHotkeyCode;
     _capturedModifiers = sHotkeyCarbonMods;
+    _displayCache      = hotkeyDisplayString(sHotkeyCode, sHotkeyCarbonMods);
     return self;
 }
 
@@ -460,6 +461,7 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy,
 
 - (void)keyDown:(NSEvent *)e {
     if (!_recording) { [super keyDown:e]; return; }
+    if (e.isARepeat)  return; // swallow repeats — avoid system error beep
     if (e.keyCode == kVK_Escape) {
         _recording = NO;
         [self setNeedsDisplay:YES];
@@ -478,6 +480,7 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy,
 
     _capturedKeyCode   = e.keyCode;
     _capturedModifiers = carbonMods;
+    _displayCache      = hotkeyDisplayString(e.keyCode, carbonMods);
     _recording = NO;
     [self setNeedsDisplay:YES];
 }
@@ -491,9 +494,7 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy,
     [[NSColor separatorColor] setStroke];
     [path stroke];
 
-    NSString *text = _recording
-        ? @"Press a combo — Esc to cancel"
-        : hotkeyDisplayString(_capturedKeyCode, _capturedModifiers);
+    NSString *text = _recording ? @"Press a combo — Esc to cancel" : _displayCache;
     NSDictionary *attrs = @{
         NSFontAttributeName:            [NSFont systemFontOfSize:13],
         NSForegroundColorAttributeName: _recording ? [NSColor secondaryLabelColor]
@@ -834,8 +835,20 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
 
     EventHotKeyID hkID = {.signature = 'MTRX', .id = 1};
     EventHotKeyRef ref = NULL;
-    RegisterEventHotKey(keyCode, carbonMods, hkID, GetApplicationEventTarget(), 0, &ref);
-    self.hotKeyRef = ref;
+    OSStatus status = RegisterEventHotKey(keyCode, carbonMods, hkID,
+                                          GetApplicationEventTarget(), 0, &ref);
+    self.hotKeyRef = (status == noErr) ? ref : NULL;
+    if (status != noErr) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Hotkey already in use";
+        alert.informativeText = [NSString stringWithFormat:
+            @"\"%@\" is registered by another app and cannot be used. "
+            @"Please choose a different combination.",
+            hotkeyDisplayString(keyCode, carbonMods)];
+        alert.alertStyle = NSAlertStyleWarning;
+        [alert runModal];
+        return;
+    }
 
     [[NSUserDefaults standardUserDefaults] setInteger:keyCode    forKey:@"hotkeyKeyCode"];
     [[NSUserDefaults standardUserDefaults] setInteger:carbonMods forKey:@"hotkeyModifiers"];
@@ -893,16 +906,22 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
 - (void)_hotkeySave:(id)sender {
     [self applyHotkey:_hotkeyRecorder.capturedKeyCode
             modifiers:_hotkeyRecorder.capturedModifiers];
-    [_hotkeyPanel close];
+    // applyHotkey: may show an alert and return early on failure — only close if registered
+    if (self.hotKeyRef) {
+        [_hotkeyPanel close];
+        _hotkeyPanel = nil;
+    }
 }
 
 - (void)_hotkeyReset:(id)sender {
     [self applyHotkey:DEFAULT_HOTKEY_KEYCODE modifiers:DEFAULT_HOTKEY_MODIFIERS];
     [_hotkeyPanel close];
+    _hotkeyPanel = nil;
 }
 
 - (void)_hotkeyCancel:(id)sender {
     [_hotkeyPanel close];
+    _hotkeyPanel = nil;
 }
 
 - (void)toggleOverlay {
