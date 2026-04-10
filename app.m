@@ -6,8 +6,8 @@
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-#define HOTKEY_KEYCODE   kVK_ANSI_L
-#define HOTKEY_MODIFIERS (cmdKey | shiftKey)
+#define DEFAULT_HOTKEY_KEYCODE   kVK_ANSI_L
+#define DEFAULT_HOTKEY_MODIFIERS (cmdKey | shiftKey)
 
 #define CELL_W         14.0f
 #define CELL_H         18.0f
@@ -337,6 +337,64 @@ static BOOL                        sOverlayVisible  = NO;
 static CFMachPortRef               sEventTap        = NULL;
 static CFRunLoopSourceRef          sTapSource        = NULL;
 
+// Current hotkey — loaded from NSUserDefaults at launch, updated live on change.
+static UInt32       sHotkeyCode       = DEFAULT_HOTKEY_KEYCODE;
+static UInt32       sHotkeyCarbonMods = DEFAULT_HOTKEY_MODIFIERS;
+static CGEventFlags sHotkeyCGFlags    = kCGEventFlagMaskCommand | kCGEventFlagMaskShift;
+
+static CGEventFlags carbonModsToCGFlags(UInt32 m) {
+    CGEventFlags f = 0;
+    if (m & cmdKey)     f |= kCGEventFlagMaskCommand;
+    if (m & shiftKey)   f |= kCGEventFlagMaskShift;
+    if (m & optionKey)  f |= kCGEventFlagMaskAlternate;
+    if (m & controlKey) f |= kCGEventFlagMaskControl;
+    return f;
+}
+
+static NSString *keyCodeDisplayString(UInt32 kc) {
+    switch (kc) {
+        case kVK_ANSI_A: return @"A"; case kVK_ANSI_B: return @"B";
+        case kVK_ANSI_C: return @"C"; case kVK_ANSI_D: return @"D";
+        case kVK_ANSI_E: return @"E"; case kVK_ANSI_F: return @"F";
+        case kVK_ANSI_G: return @"G"; case kVK_ANSI_H: return @"H";
+        case kVK_ANSI_I: return @"I"; case kVK_ANSI_J: return @"J";
+        case kVK_ANSI_K: return @"K"; case kVK_ANSI_L: return @"L";
+        case kVK_ANSI_M: return @"M"; case kVK_ANSI_N: return @"N";
+        case kVK_ANSI_O: return @"O"; case kVK_ANSI_P: return @"P";
+        case kVK_ANSI_Q: return @"Q"; case kVK_ANSI_R: return @"R";
+        case kVK_ANSI_S: return @"S"; case kVK_ANSI_T: return @"T";
+        case kVK_ANSI_U: return @"U"; case kVK_ANSI_V: return @"V";
+        case kVK_ANSI_W: return @"W"; case kVK_ANSI_X: return @"X";
+        case kVK_ANSI_Y: return @"Y"; case kVK_ANSI_Z: return @"Z";
+        case kVK_ANSI_0: return @"0"; case kVK_ANSI_1: return @"1";
+        case kVK_ANSI_2: return @"2"; case kVK_ANSI_3: return @"3";
+        case kVK_ANSI_4: return @"4"; case kVK_ANSI_5: return @"5";
+        case kVK_ANSI_6: return @"6"; case kVK_ANSI_7: return @"7";
+        case kVK_ANSI_8: return @"8"; case kVK_ANSI_9: return @"9";
+        case kVK_F1:  return @"F1";  case kVK_F2:  return @"F2";
+        case kVK_F3:  return @"F3";  case kVK_F4:  return @"F4";
+        case kVK_F5:  return @"F5";  case kVK_F6:  return @"F6";
+        case kVK_F7:  return @"F7";  case kVK_F8:  return @"F8";
+        case kVK_F9:  return @"F9";  case kVK_F10: return @"F10";
+        case kVK_F11: return @"F11"; case kVK_F12: return @"F12";
+        case kVK_Space:  return @"Space";
+        case kVK_Return: return @"↩";
+        case kVK_Tab:    return @"⇥";
+        case kVK_Delete: return @"⌫";
+        default:         return [NSString stringWithFormat:@"(%u)", kc];
+    }
+}
+
+static NSString *hotkeyDisplayString(UInt32 keyCode, UInt32 carbonMods) {
+    NSMutableString *s = [NSMutableString string];
+    if (carbonMods & controlKey) [s appendString:@"⌃"];
+    if (carbonMods & optionKey)  [s appendString:@"⌥"];
+    if (carbonMods & shiftKey)   [s appendString:@"⇧"];
+    if (carbonMods & cmdKey)     [s appendString:@"⌘"];
+    [s appendString:keyCodeDisplayString(keyCode)];
+    return [s copy];
+}
+
 // CGEventTap callback — blocks all keyboard events while overlay is active,
 // except our exact unlock hotkey combo which Carbon already handled upstream.
 static CGEventRef EventTapCallback(CGEventTapProxy proxy,
@@ -365,17 +423,97 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy,
                                      kCGEventFlagMaskShift    |
                                      kCGEventFlagMaskAlternate|
                                      kCGEventFlagMaskControl);
-        CGEventFlags wantFlags = kCGEventFlagMaskCommand | kCGEventFlagMaskShift;
-        if (keyCode == HOTKEY_KEYCODE && flags == wantFlags) return event;
+        if (keyCode == sHotkeyCode && flags == sHotkeyCGFlags) return event;
     }
 
     return NULL; // block everything else (Cmd+Tab, Cmd+Space, volume keys…)
 }
 
 // ---------------------------------------------------------------------------
+// Hotkey recorder — click to enter recording mode, press a combo, Esc to cancel
+// ---------------------------------------------------------------------------
+@interface HotkeyRecorderView : NSView
+@property (nonatomic) UInt32 capturedKeyCode;
+@property (nonatomic) UInt32 capturedModifiers; // Carbon format
+@end
+
+@implementation HotkeyRecorderView {
+    BOOL _recording;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (!self) return nil;
+    _capturedKeyCode  = sHotkeyCode;
+    _capturedModifiers = sHotkeyCarbonMods;
+    return self;
+}
+
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)canBecomeKeyView      { return YES; }
+
+- (void)mouseDown:(NSEvent *)e {
+    [self.window makeFirstResponder:self];
+    _recording = YES;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)keyDown:(NSEvent *)e {
+    if (!_recording) { [super keyDown:e]; return; }
+    if (e.keyCode == kVK_Escape) {
+        _recording = NO;
+        [self setNeedsDisplay:YES];
+        return;
+    }
+    NSUInteger cocoaMods = e.modifierFlags &
+        (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+         NSEventModifierFlagOption  | NSEventModifierFlagControl);
+    if (cocoaMods == 0) return; // require at least one modifier key
+
+    UInt32 carbonMods = 0;
+    if (cocoaMods & NSEventModifierFlagCommand) carbonMods |= cmdKey;
+    if (cocoaMods & NSEventModifierFlagShift)   carbonMods |= shiftKey;
+    if (cocoaMods & NSEventModifierFlagOption)  carbonMods |= optionKey;
+    if (cocoaMods & NSEventModifierFlagControl) carbonMods |= controlKey;
+
+    _capturedKeyCode   = e.keyCode;
+    _capturedModifiers = carbonMods;
+    _recording = NO;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:
+                          NSInsetRect(self.bounds, 0.5, 0.5) xRadius:6 yRadius:6];
+    [(_recording ? [NSColor selectedControlColor]
+                 : [NSColor controlBackgroundColor]) setFill];
+    [path fill];
+    [[NSColor separatorColor] setStroke];
+    [path stroke];
+
+    NSString *text = _recording
+        ? @"Press a combo — Esc to cancel"
+        : hotkeyDisplayString(_capturedKeyCode, _capturedModifiers);
+    NSDictionary *attrs = @{
+        NSFontAttributeName:            [NSFont systemFontOfSize:13],
+        NSForegroundColorAttributeName: _recording ? [NSColor secondaryLabelColor]
+                                                   : [NSColor labelColor],
+    };
+    NSSize sz = [text sizeWithAttributes:attrs];
+    [text drawAtPoint:NSMakePoint((NSWidth(self.bounds)  - sz.width)  / 2,
+                                  (NSHeight(self.bounds) - sz.height) / 2)
+       withAttributes:attrs];
+}
+@end
+
+// ---------------------------------------------------------------------------
 // App delegate
 // ---------------------------------------------------------------------------
-@interface AppDelegate : NSObject <NSApplicationDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate> {
+    NSMenuItem         *_hotkeyMenuItem;
+    NSPanel            *_hotkeyPanel;
+    HotkeyRecorderView *_hotkeyRecorder;
+}
 @property (nonatomic) EventHotKeyRef   hotKeyRef;
 @property (strong, nonatomic) NSStatusItem *statusItem;
 - (void)toggleOverlay;
@@ -397,12 +535,22 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     btn.image = [NSImage imageWithSystemSymbolName:@"lock.open.fill"
                           accessibilityDescription:@"Cypher"];
     btn.image.template = YES;
-    btn.toolTip = @"Cypher — Cmd+Shift+L to lock";
+    btn.toolTip = [NSString stringWithFormat:@"Cypher — %@ to lock",
+                   hotkeyDisplayString(sHotkeyCode, sHotkeyCarbonMods)];
 
     NSMenu *menu = [[NSMenu alloc] init];
     [menu addItemWithTitle:@"Toggle Matrix Lock"
                     action:@selector(toggleOverlay)
              keyEquivalent:@""];
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    _hotkeyMenuItem = [[NSMenuItem alloc]
+        initWithTitle:[NSString stringWithFormat:@"Change Hotkey (%@)…",
+                       hotkeyDisplayString(sHotkeyCode, sHotkeyCarbonMods)]
+               action:@selector(changeHotkey:)
+        keyEquivalent:@""];
+    _hotkeyMenuItem.target = self;
+    [menu addItem:_hotkeyMenuItem];
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *loginItem = [[NSMenuItem alloc]
@@ -496,16 +644,17 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
                                    (__bridge void *)self, NULL);
     EventHotKeyID hkID = {.signature = 'MTRX', .id = 1};
     EventHotKeyRef ref  = NULL;
-    OSStatus status = RegisterEventHotKey(HOTKEY_KEYCODE, HOTKEY_MODIFIERS, hkID,
+    OSStatus status = RegisterEventHotKey(sHotkeyCode, sHotkeyCarbonMods, hkID,
                                           GetApplicationEventTarget(), 0, &ref);
     if (status != noErr) {
         NSAlert *alert = [[NSAlert alloc] init];
         alert.messageText = @"Input Monitoring permission required";
-        alert.informativeText =
+        alert.informativeText = [NSString stringWithFormat:
             @"Cypher needs Input Monitoring access to register the unlock "
-            @"hotkey (Cmd+Shift+L).\n\n"
+            @"hotkey (%@).\n\n"
             @"Without it the screen cannot be unlocked once locked.\n\n"
-            @"Click \"Open Settings\", enable Cypher, then relaunch the app.";
+            @"Click \"Open Settings\", enable Cypher, then relaunch the app.",
+            hotkeyDisplayString(sHotkeyCode, sHotkeyCarbonMods)];
         alert.alertStyle = NSAlertStyleCritical;
         [alert addButtonWithTitle:@"Open Settings"];
         [alert addButtonWithTitle:@"Quit"];
@@ -526,11 +675,13 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     sOverlayWindows = [[NSMutableArray alloc] init];
+    [self loadHotkeyPrefs];
 
     if (![self checkAndRequestPermissions]) return;
 
     [self setupStatusItem];
-    NSLog(@"[cypher] Running — Cmd+Shift+L to toggle Matrix lock.");
+    NSLog(@"[cypher] Running — %@ to toggle Matrix lock.",
+          hotkeyDisplayString(sHotkeyCode, sHotkeyCarbonMods));
 }
 
 - (void)applicationWillTerminate:(NSNotification *)note {
@@ -661,6 +812,97 @@ static OSStatus HotkeyHandler(EventHandlerCallRef next, EventRef event, void *us
     [sOverlayWindows removeAllObjects];
     sOverlayVisible = NO;
     [self updateStatusIcon];
+}
+
+- (void)loadHotkeyPrefs {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    if ([d objectForKey:@"hotkeyKeyCode"]) {
+        sHotkeyCode       = (UInt32)[d integerForKey:@"hotkeyKeyCode"];
+        sHotkeyCarbonMods = (UInt32)[d integerForKey:@"hotkeyModifiers"];
+        sHotkeyCGFlags    = carbonModsToCGFlags(sHotkeyCarbonMods);
+    }
+}
+
+- (void)applyHotkey:(UInt32)keyCode modifiers:(UInt32)carbonMods {
+    if (self.hotKeyRef) {
+        UnregisterEventHotKey(self.hotKeyRef);
+        self.hotKeyRef = NULL;
+    }
+    sHotkeyCode       = keyCode;
+    sHotkeyCarbonMods = carbonMods;
+    sHotkeyCGFlags    = carbonModsToCGFlags(carbonMods);
+
+    EventHotKeyID hkID = {.signature = 'MTRX', .id = 1};
+    EventHotKeyRef ref = NULL;
+    RegisterEventHotKey(keyCode, carbonMods, hkID, GetApplicationEventTarget(), 0, &ref);
+    self.hotKeyRef = ref;
+
+    [[NSUserDefaults standardUserDefaults] setInteger:keyCode    forKey:@"hotkeyKeyCode"];
+    [[NSUserDefaults standardUserDefaults] setInteger:carbonMods forKey:@"hotkeyModifiers"];
+
+    NSString *label = hotkeyDisplayString(keyCode, carbonMods);
+    _hotkeyMenuItem.title = [NSString stringWithFormat:@"Change Hotkey (%@)…", label];
+    self.statusItem.button.toolTip = [NSString stringWithFormat:@"Cypher — %@ to lock", label];
+}
+
+- (void)changeHotkey:(id)sender {
+    if (_hotkeyPanel && _hotkeyPanel.isVisible) {
+        [_hotkeyPanel makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+        return;
+    }
+
+    _hotkeyPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 300, 130)
+                                              styleMask:NSWindowStyleMaskTitled |
+                                                        NSWindowStyleMaskClosable
+                                                backing:NSBackingStoreBuffered
+                                                  defer:NO];
+    _hotkeyPanel.title = @"Change Hotkey";
+    _hotkeyPanel.releasedWhenClosed = NO;
+    NSView *content = _hotkeyPanel.contentView;
+
+    NSTextField *label = [NSTextField labelWithString:@"Click the field, then press a key combo:"];
+    label.frame = NSMakeRect(16, 94, 268, 18);
+    label.font = [NSFont systemFontOfSize:12];
+    [content addSubview:label];
+
+    _hotkeyRecorder = [[HotkeyRecorderView alloc] initWithFrame:NSMakeRect(16, 62, 268, 28)];
+    [content addSubview:_hotkeyRecorder];
+
+    NSButton *cancelBtn = [NSButton buttonWithTitle:@"Cancel"
+                                             target:self action:@selector(_hotkeyCancel:)];
+    cancelBtn.frame = NSMakeRect(16, 16, 80, 28);
+    [content addSubview:cancelBtn];
+
+    NSButton *resetBtn = [NSButton buttonWithTitle:@"Reset to Default"
+                                            target:self action:@selector(_hotkeyReset:)];
+    resetBtn.frame = NSMakeRect(104, 16, 126, 28);
+    [content addSubview:resetBtn];
+
+    NSButton *saveBtn = [NSButton buttonWithTitle:@"Save"
+                                           target:self action:@selector(_hotkeySave:)];
+    saveBtn.frame = NSMakeRect(238, 16, 62, 28);
+    saveBtn.keyEquivalent = @"\r";
+    [content addSubview:saveBtn];
+
+    [_hotkeyPanel center];
+    [_hotkeyPanel makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)_hotkeySave:(id)sender {
+    [self applyHotkey:_hotkeyRecorder.capturedKeyCode
+            modifiers:_hotkeyRecorder.capturedModifiers];
+    [_hotkeyPanel close];
+}
+
+- (void)_hotkeyReset:(id)sender {
+    [self applyHotkey:DEFAULT_HOTKEY_KEYCODE modifiers:DEFAULT_HOTKEY_MODIFIERS];
+    [_hotkeyPanel close];
+}
+
+- (void)_hotkeyCancel:(id)sender {
+    [_hotkeyPanel close];
 }
 
 - (void)toggleOverlay {
