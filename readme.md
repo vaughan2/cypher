@@ -36,7 +36,7 @@ A macOS menu bar utility that locks your screen with a Matrix-style rain animati
 ```sh
 git clone https://github.com/vaughan2/cypher
 cd cypher
-make install   # builds and copies to /Applications
+make install
 ```
 
 ## Permissions

@@ -78,7 +78,8 @@ go.work.sum
 *.pdb
 
 # Kernel Module Compile Results
-*.mod*
+*.mod
+!go.mod
 *.cmd
 .tmp_versions/
 modules.order
